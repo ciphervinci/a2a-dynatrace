@@ -1,0 +1,37 @@
+# Render Blueprint for A2A Dynatrace Agent
+# ServiceNow A2A Compatible Configuration
+
+services:
+  - type: web
+    name: a2a-dynatrace-agent
+    runtime: python
+    plan: free  # Consider "starter" for production (no cold starts)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    
+    envVars:
+      # Required: Dynatrace Configuration
+      - key: DYNATRACE_URL
+        sync: false  # Set manually - e.g., https://xyz.live.dynatrace.com
+      - key: DYNATRACE_API_TOKEN
+        sync: false  # Set manually - needs problems.read, entities.read, metrics.read scopes
+      
+      # Required: AI Configuration
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually
+      
+      # Optional: A2A Authentication
+      - key: A2A_API_KEY
+        sync: false  # Set manually - use in ServiceNow as x-sn-apikey header
+      
+      # CRITICAL: Public URL for Agent Card
+      - key: HOST_URL
+        fromService:
+          name: a2a-dynatrace-agent
+          type: web
+          property: host
+      
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+    
+    healthCheckPath: /health
