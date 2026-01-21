@@ -130,12 +130,36 @@ class DynatraceClient:
         Get detailed information about a specific problem.
         
         Args:
-            problem_id: The problem ID (e.g., "P-12345" or full ID)
+            problem_id: The problem ID - can be display ID (P-12345) or internal ID
             fields: Additional fields to include
             
         Returns:
             Problem details including root cause evidence
         """
+        # Check if this is a display ID (P-XXXXXX format) - need to look it up first
+        if problem_id.upper().startswith("P-"):
+            # Search for the problem by display ID
+            display_id = problem_id.upper()
+            search_params = {
+                "problemSelector": f'displayId("{display_id}")',
+                "pageSize": 1,
+                "from": "now-90d",  # Search last 90 days
+            }
+            
+            search_result = await self._make_request("GET", "/problems", params=search_params)
+            problems = search_result.get("problems", [])
+            
+            if not problems:
+                raise ValueError(f"Problem {display_id} not found")
+            
+            # Get the internal problem ID
+            internal_id = problems[0].get("problemId")
+            if not internal_id:
+                raise ValueError(f"Could not resolve internal ID for {display_id}")
+            
+            problem_id = internal_id
+        
+        # Now fetch the full details using the internal ID
         params = {"fields": fields} if fields else {}
         return await self._make_request("GET", f"/problems/{problem_id}", params=params)
     
@@ -354,7 +378,8 @@ class DynatraceClient:
         severity = problem.get("severityLevel", "UNKNOWN")
         impact = problem.get("impactLevel", "UNKNOWN")
         title = problem.get("title", "Unknown Problem")
-        display_id = problem.get("displayId", problem.get("problemId", ""))
+        display_id = problem.get("displayId", "")
+        problem_id = problem.get("problemId", "")
         
         # Format timestamps
         start_ts = problem.get("startTime", 0)
@@ -365,7 +390,18 @@ class DynatraceClient:
         
         # Get affected entities
         affected = problem.get("affectedEntities", [])
-        affected_names = [e.get("name", e.get("entityId", {}).get("id", "Unknown")) for e in affected[:5]]
+        affected_names = []
+        for e in affected[:5]:
+            # Handle different entity structures
+            if isinstance(e, dict):
+                name = e.get("name") or e.get("displayName")
+                if not name:
+                    entity_id = e.get("entityId", {})
+                    if isinstance(entity_id, dict):
+                        name = entity_id.get("id", "Unknown")
+                    else:
+                        name = str(entity_id) if entity_id else "Unknown"
+                affected_names.append(name)
         
         # Status emoji
         status_emoji = "🔴" if status == "OPEN" else "🟢"
@@ -377,8 +413,11 @@ class DynatraceClient:
             "CUSTOM_ALERT": "⚠️"
         }.get(severity, "❓")
         
+        # Use display ID if available, otherwise show problem ID
+        id_display = display_id if display_id else problem_id[:20] + "..." if len(problem_id) > 20 else problem_id
+        
         output = f"""
-{status_emoji} **Problem {display_id}**: {title}
+{status_emoji} **Problem {id_display}**: {title}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **Status:** {status}
@@ -388,7 +427,7 @@ class DynatraceClient:
 **Ended:** {end_time}
 
 **Affected Entities ({len(affected)}):**
-{chr(10).join(f"  • {name}" for name in affected_names)}
+{chr(10).join(f"  • {name}" for name in affected_names) if affected_names else "  • None identified"}
 """
         return output.strip()
     
